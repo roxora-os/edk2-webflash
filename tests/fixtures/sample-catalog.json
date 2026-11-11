@@ -25,7 +25,13 @@
       "extract_size": 2466250752,
       "extract_sha256": "dfde70fa7ff6dd7a4b24c47624bb2d0b6c1fde2fa1b8222ca55b2ae5f06fbb88",
       "status": "ci-only",
-      "verify_url": "https://github.com/roxora-os/build/releases/download/v2026.11.0/roxora-radxa-rock-4d-noble-edge-2026.11.0.verify.txt"
+      "verify_url": "https://github.com/roxora-os/build/releases/download/v2026.11.0/roxora-radxa-rock-4d-noble-edge-2026.11.0.verify.txt",
+      "spi": {
+        "file": "roxora-radxa-rock-4d-noble-edge-2026.11.0-spi.img",
+        "url": "https://github.com/roxora-os/build/releases/download/v2026.11.0/roxora-radxa-rock-4d-noble-edge-2026.11.0-spi.img",
+        "size": 16777216,
+        "sha256": "33831091f7cd2f9a070fcbff36243cbb4b6ae49f4c96a9607f214652e01f3561"
+      }
     },
     {
       "board": "armsom-cm5-io",

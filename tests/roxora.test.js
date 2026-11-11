@@ -11,9 +11,12 @@ const sample = JSON.parse(readFileSync(join(root, 'tests/fixtures/sample-catalog
 
 test('parseImageName follows the release contract', () => {
   assert.deepEqual(parseImageName('roxora-radxa-rock-4d-noble-edge-2026.11.0.img.xz'),
-    { board: 'radxa-rock-4d', release: 'noble', branch: 'edge', version: '2026.11.0' });
+    { board: 'radxa-rock-4d', release: 'noble', branch: 'edge', version: '2026.11.0', kind: 'disk' });
   assert.deepEqual(parseImageName('roxora-armsom-cm5-io-noble-vendor-2026.12.3.img.xz'),
-    { board: 'armsom-cm5-io', release: 'noble', branch: 'vendor', version: '2026.12.3' });
+    { board: 'armsom-cm5-io', release: 'noble', branch: 'vendor', version: '2026.12.3', kind: 'disk' });
+  assert.deepEqual(parseImageName('roxora-radxa-rock-4d-noble-edge-2026.12.0-spi.img'),
+    { board: 'radxa-rock-4d', release: 'noble', branch: 'edge', version: '2026.12.0', kind: 'spi' });
+  assert.equal(parseImageName('roxora-radxa-rock-4d-noble-edge-2026.12.0-spi.img.sha256'), null);
   assert.equal(parseImageName('roxora-armsom-cm5-io-noble-edge-2026.11.0.verify.txt'), null);
   assert.equal(parseImageName('roxora-unknown-board-noble-edge-2026.11.0.img.xz'), null);
   assert.equal(parseImageName('roxora-catalog.json'), null);
@@ -34,6 +37,10 @@ function fakeApi() {
           digest: 'sha256:' + img.sha256.toUpperCase(),
         })),
         ...sample.images.map((img) => ({ name: img.file + '.sha256', size: 100 })),
+        ...sample.images.filter((img) => img.spi).flatMap((img) => [
+          { name: img.spi.file, size: img.spi.size, browser_download_url: img.spi.url, digest: 'sha256:' + img.spi.sha256 },
+          { name: img.spi.file + '.sha256', size: 100 },
+        ]),
         { name: 'roxora-catalog.json', size: 1000 },
         { name: 'SHA256SUMS', size: 500 },
       ],
@@ -51,6 +58,10 @@ test('imagesFromReleases: images only, drafts skipped, digest read', () => {
   assert.equal(cm5.sha256, ref.sha256);
   assert.equal(cm5.prerelease, true);
   assert.equal(cm5.tag, 'v2026.11.0');
+  assert.equal(cm5.spi, null);
+  const r4d = imgs.find((i) => i.board === 'radxa-rock-4d');
+  const r4dRef = sample.images.find((i) => i.board === 'radxa-rock-4d');
+  assert.deepEqual(r4d.spi, r4dRef.spi);
   assert.deepEqual(imagesFromReleases(null), []);
 });
 
@@ -60,6 +71,7 @@ test('parseCatalog reads the sample catalog', () => {
   const r4d = imgs.find((i) => i.board === 'radxa-rock-4d');
   assert.equal(r4d.extractSize, 2466250752);
   assert.equal(r4d.status, 'ci-only');
+  assert.equal(r4d.spi.size, 16777216);
   assert.throws(() => parseCatalog({ schema: 2 }), /schema/);
 });
 
@@ -73,6 +85,11 @@ test('expectedForFile matches the .img.xz and the extracted .img', () => {
   assert.equal(b.compressed, false);
   assert.equal(b.sha256, ref.extract_sha256);
   assert.equal(b.size, ref.extract_size);
+  const s = expectedForFile(imgs, sample.images[0].spi.file);
+  assert.equal(s.spi, true);
+  assert.equal(s.size, 16777216);
+  assert.equal(s.sha256, sample.images[0].spi.sha256);
+  assert.equal(s.image.board, 'radxa-rock-4d');
   assert.equal(expectedForFile(imgs, 'CM5IO-emmc-edk2-0.2.1.img'), null);
 });
 

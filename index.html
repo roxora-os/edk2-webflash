@@ -318,6 +318,11 @@
     function customBlockReason() {
       if (customProblem) return customProblem;
       if (!customInfo) return '';
+      const exp = customExpected;
+      if (exp && exp.image.board !== ROXORA_BOARDS[currentDevice]) {
+        const what = exp.spi ? 'the SPI bootloader' : 'the Roxora image';
+        return `This is ${what} for another board (${exp.image.board}). Select that board above.`;
+      }
       const size = customInfo.imageSize ?? customInfo.imageSizeHint ?? customInfo.compressedSize;
       if (currentDevice === 'rock4d' && size > ROCK4D_SPI_BYTES) {
         return `On the ROCK 4D this page writes the ${fmtSize(ROCK4D_SPI_BYTES)} SPI flash, and this image is ` +
@@ -379,7 +384,8 @@
                 customProblem = `This file does not match Roxora ${exp.image.tag}: its SHA-256 is ${sha256}, ` +
                                 `the release lists ${exp.sha256}. Download it again.`;
               } else {
-                notes.push(`Checksum matches Roxora ${exp.image.tag}.`);
+                notes.push(`Checksum matches Roxora ${exp.image.tag}` +
+                           (exp.spi ? ' (SPI bootloader).' : '.'));
               }
             } else if (exp) {
               notes.push(`Listed in Roxora ${exp.image.tag}; the release gives no checksum to compare.`);
@@ -418,9 +424,11 @@
       if (currentDevice === 'rock4d') {
         roxoraIntro.textContent =
           'The ROCK 4D runs Roxora from a microSD card. Its boot ROM starts only from the SPI flash ' +
-          '(or a UFS module), never from the card, so the SPI flash needs a bootloader that reads the card: ' +
-          'flash it with Flash U-Boot above (the UEFI firmware does not start Roxora). Then write the image ' +
-          'below to a microSD card with Raspberry Pi Imager.';
+          '(or a UFS module), never from the card, so the SPI flash needs a bootloader that reads the card ' +
+          '(the UEFI firmware does not start Roxora). If the release below has an SPI bootloader, download ' +
+          'it and pick it under Flash custom image: it is checked against the release and written to the ' +
+          'SPI flash. Otherwise use Flash U-Boot above. Then write the image to a microSD card with ' +
+          'Raspberry Pi Imager.';
       } else {
         roxoraIntro.textContent =
           'On the CM5-IO, Roxora goes on the eMMC: download the image below, then pick the downloaded ' +
@@ -444,7 +452,10 @@
           el('a', { href: img.url, rel: 'noopener' }, img.file), el('br'),
           el('span', { class: 'meta' },
             `${img.tag}${img.prerelease ? ', pre-release: not tested on hardware yet' : ''}, ` +
-            `Ubuntu ${img.release}, kernel branch ${img.branch}, ${fmtSize(img.size)}`)));
+            `Ubuntu ${img.release}, kernel branch ${img.branch}, ${fmtSize(img.size)}`),
+          ...(img.spi ? [el('br'), 'SPI bootloader: ',
+            el('a', { href: img.spi.url, rel: 'noopener' }, img.spi.file),
+            el('span', { class: 'meta' }, `, ${fmtSize(img.spi.size)}`)] : [])));
       }
       roxoraList.append(el('li', {}, el('a', { href: RELEASES_PAGE, target: '_blank', rel: 'noopener' }, 'All releases')));
     }
@@ -713,9 +724,10 @@
     btnUboot.addEventListener('click', () => doFlash(DEVICES[currentDevice].targets.uboot, btnUboot));
     btnCustom.addEventListener('click', () => {
       if (!customFile) return;
-      const roxora = customExpected
-        ? ' Roxora starts on the first boot; log in as ubuntu with password ubuntu and choose a new password.'
-        : '';
+      const roxora = !customExpected ? ''
+        : customExpected.spi
+          ? ' The SPI flash now holds the U-Boot of this Roxora release. Write the image to a microSD card with Raspberry Pi Imager and boot from the card.'
+          : ' Roxora starts on the first boot; log in as ubuntu with password ubuntu and choose a new password.';
       doFlash({
         label:   'Custom Image',
         fwBlob:  customFile,

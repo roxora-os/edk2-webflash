@@ -24,13 +24,17 @@ export const ROXORA_BOARDS = {
 const VERSION_RE = /^\d{4}\.\d{2}\.\d+$/;
 
 /**
- * Split an image file name per the contract:
- *   roxora-<board>-<release>-<branch>-<version>.img.xz
+ * Split a release file name per the contract:
+ *   roxora-<board>-<release>-<branch>-<version>.img.xz      disk image
+ *   roxora-<board>-<release>-<branch>-<version>-spi.img     SPI bootloader
  * Board names contain dashes, so the known board names are tried as prefixes.
- * Returns null for other names.
+ * Returns null for other names; `kind` is 'disk' or 'spi'.
  */
 export function parseImageName(file) {
-  const m = /^roxora-(.+)\.img\.xz$/.exec(file);
+  let kind = 'disk';
+  let m = /^roxora-(.+)-spi\.img$/.exec(file);
+  if (m) kind = 'spi';
+  else m = /^roxora-(.+)\.img\.xz$/.exec(file);
   if (!m) return null;
   for (const board of Object.values(ROXORA_BOARDS)) {
     if (!m[1].startsWith(board + '-')) continue;
@@ -39,26 +43,40 @@ export function parseImageName(file) {
     const version = parts.pop();
     if (!VERSION_RE.test(version)) return null;
     const release = parts.shift();
-    return { board, release, branch: parts.join('-'), version };
+    return { board, release, branch: parts.join('-'), version, kind };
   }
   return null;
 }
 
+function assetSha256(asset) {
+  return typeof asset.digest === 'string' && asset.digest.startsWith('sha256:')
+    ? asset.digest.slice(7).toLowerCase() : null;
+}
+
 /**
  * Images per release from a GET /repos/roxora-os/build/releases response.
- * Drafts are skipped; newest release first, as the API returns them.
+ * Drafts are skipped; newest release first, as the API returns them.  An SPI
+ * bootloader asset is attached to the disk image of the same build as `spi`.
  */
 export function imagesFromReleases(releases) {
   const out = [];
   for (const rel of Array.isArray(releases) ? releases : []) {
     if (rel.draft) continue;
+    const spis = new Map();
     for (const asset of rel.assets ?? []) {
       const parsed = parseImageName(asset.name);
-      if (!parsed) continue;
-      const digest = typeof asset.digest === 'string' && asset.digest.startsWith('sha256:')
-        ? asset.digest.slice(7).toLowerCase() : null;
+      if (parsed?.kind !== 'spi') continue;
+      spis.set(asset.name.replace(/-spi\.img$/, '.img.xz'), {
+        file: asset.name, url: asset.browser_download_url, size: asset.size, sha256: assetSha256(asset),
+      });
+    }
+    for (const asset of rel.assets ?? []) {
+      const parsed = parseImageName(asset.name);
+      if (parsed?.kind !== 'disk') continue;
+      const digest = assetSha256(asset);
       out.push({
         ...parsed,
+        spi: spis.get(asset.name) ?? null,
         tag: rel.tag_name,
         prerelease: !!rel.prerelease,
         releaseUrl: rel.html_url,
@@ -95,6 +113,7 @@ export function parseCatalog(catalog) {
     extractSize: img.extract_size ?? null,
     extractSha256: img.extract_sha256 ?? null,
     status: img.status,
+    spi: img.spi ? { file: img.spi.file, url: img.spi.url, size: img.spi.size, sha256: img.spi.sha256 } : null,
   }));
 }
 
@@ -124,11 +143,15 @@ export async function fetchRoxoraImages(fetchFn = fetch) {
 
 /**
  * What a picked file should match, given the known images.
- * The file is either the release file itself (.img.xz) or the .img a user
- * extracted from it.  Returns null when the name is not a known image.
+ * The file is the release file itself (.img.xz), the .img a user extracted
+ * from it, or the SPI bootloader image (`spi: true`).  Returns null when the
+ * name is not a known release file.
  */
 export function expectedForFile(images, fileName) {
   for (const img of images) {
+    if (img.spi && fileName === img.spi.file) {
+      return { image: img, spi: true, compressed: false, size: img.spi.size, sha256: img.spi.sha256 };
+    }
     if (fileName === img.file) {
       return { image: img, compressed: true, size: img.size, sha256: img.sha256 };
     }
