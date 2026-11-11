@@ -53,6 +53,10 @@ export async function createFlashWorker({ workerUrl, moduleUrl, wasmUrl, onStdou
     umount:    ({ dir })       => send('umount', { dir }),
     /** Run rkdeveloptool with the given CLI args. Returns { exitCode }. */
     run:       (args)          => send('run', { args }),
+    /** Read a file from the WASM filesystem. Returns a Uint8Array. */
+    readFile:  (path)          => send('readFile', { path }),
+    /** Delete a file from the WASM filesystem (no error if it is missing). */
+    unlink:    (path)          => send('unlink', { path }),
     /** Sleep for ms milliseconds inside the Worker. */
     sleep:     (ms)            => send('sleep', { ms }),
     /** Terminate the Worker (cleanup). */

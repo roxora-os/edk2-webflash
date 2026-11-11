@@ -127,6 +127,20 @@ self.addEventListener('message', async ({ data: msg }) => {
         break;
       }
 
+      case 'readFile': {
+        if (!mod) throw new Error('Worker not initialized');
+        const data = mod.FS.readFile(params.path);
+        self.postMessage({ id, type: 'ok', data }, [data.buffer]);
+        break;
+      }
+
+      case 'unlink': {
+        if (!mod) throw new Error('Worker not initialized');
+        try { mod.FS.unlink(params.path); } catch (_) {}
+        reply(id, {});
+        break;
+      }
+
       case 'sleep': {
         await new Promise((ok) => setTimeout(ok, params.ms));
         reply(id, {});
