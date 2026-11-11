@@ -6,6 +6,12 @@ Wraps [rkdeveloptool](https://github.com/rockchip-linux/rkdeveloptool) compiled 
 
 **Live: https://flash.gahingwoo.com/**
 
+> This is the Roxora Project's fork, deployed at
+> https://roxora-os.github.io/edk2-webflash/. It adds a panel listing Roxora
+> images. The original is
+> [gahingwoo/edk2-webflash](https://github.com/gahingwoo/edk2-webflash), which
+> serves flash.gahingwoo.com; this fork does not.
+
 Requires Chrome or Edge (WebUSB). No drivers on Linux / macOS.
 Windows: install WinUSB for the device via [Zadig](https://zadig.akeo.ie/).
 
