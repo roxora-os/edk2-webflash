@@ -27,6 +27,16 @@ Windows: install WinUSB for the device via [Zadig](https://zadig.akeo.ie/).
 **Flash U-Boot** writes mainline U-Boot instead. **Flash Custom Image** writes
 any image you pick from disk.
 
+Custom images can be `.img`, `.img.xz` or `.img.gz`. Compressed files are
+decompressed in the browser while they are written, so a multi-GB OS image
+works without unpacking it first and without holding it in memory. Before
+writing, the page reads the storage size and refuses an image that does not
+fit; on the ROCK 4D, where it writes the 16 MiB SPI flash, it refuses OS-sized
+images outright. After writing it can read back the first 32 MiB (partition
+table and bootloader) and compare. It does not read back further: with the
+RK3576 loader, reads past 32 MiB of the eMMC have returned 0xCC filler instead
+of data.
+
 > **Why two device picks?**
 > After `DownloadBoot` the SoC resets and re-enumerates. WebUSB invalidates
 > the old handle on disconnect, and `requestDevice()` requires a user gesture
@@ -40,6 +50,13 @@ any image you pick from disk.
 index.html            UI + flash sequencer (main thread)
 src/proxy.js          Promise-based Worker RPC wrapper
 src/worker.js         Dedicated Worker — WASM host, WORKERFS mount manager
+src/image-worker.js   Dedicated Worker: reads, decompresses and hashes custom images
+src/image-proxy.js    Worker RPC wrapper for image-worker.js
+src/image-source.js   format detection, decompression streams, wl-sized pieces
+src/custom-flash.js   custom image write, rfi size check, read-back
+src/xz.js, sha256.js  xz decoder (on vendor/xzwasm) and incremental SHA-256
+vendor/xzwasm/        xz-embedded compiled to WebAssembly (xzwasm, MIT)
+tests/                Node tests, with a stand-in for the rkdeveloptool worker
 dist/                 CI-built artefacts (not in tree)
   rkdeveloptool.js    Emscripten glue
   rkdeveloptool.wasm
@@ -80,6 +97,22 @@ site. The page cannot fetch them from GitHub directly: release downloads carry
 no CORS headers. A new release therefore reaches the site on the next daily
 run, or at once with a manual run of the workflow.
 
+Tests need Node 22 and the `xz` and `gzip` commands, nothing else:
+
+```
+npm test
+```
+
+Custom image sequence (after ⑤):
+
+```
+rkdeveloptool rfi                   storage size; refuse an image that does not fit
+.img:     rkdeveloptool wl 0 image   one call, WORKERFS reads the File as needed
+.img.xz:  rkdeveloptool wl <lba> piece.img   one call per 32 MiB, decompressed in
+          image-worker.js; a piece never starts with a sparse or UBI magic
+rkdeveloptool rl 0 65536 readback   optional: compare the first 32 MiB
+```
+
 ---
 
 ## License
@@ -91,5 +124,6 @@ GPL-2.0. See [LICENSE](LICENSE).
 | rkdeveloptool | GPL-2.0 |
 | libusb 1.0.29 | LGPL-2.1 |
 | coi-serviceworker | MIT |
+| [xzwasm](https://github.com/SteveSanderson/xzwasm) (xz-embedded, walloc) | MIT (xz-embedded: public domain) |
 | [edk2-rk3576](https://github.com/gahingwoo/edk2-rk3576) firmware | BSD-2-Clause-Patent |
 
