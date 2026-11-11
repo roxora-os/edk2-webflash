@@ -95,6 +95,8 @@
     }
     .risk-check input { margin-top: .18rem; flex-shrink: 0; cursor: pointer; }
     #btn-custom { background: #b91c1c; padding: .45rem 1.3rem; font-size: .88rem; }
+    .custom-info { font-size: .82rem; color: #444; margin: -.2rem 0 .6rem; min-height: 1.2em; }
+    .custom-info.err { color: #cf222e; }
     #btn-custom:hover:not(:disabled) { background: #991b1b; }
   </style>
 </head>
@@ -132,12 +134,13 @@
   <progress id="prog" value="0" max="100"></progress>
   <div id="log" aria-live="polite"></div>
 
-  <details class="custom-section">
+  <details class="custom-section" id="custom-section">
     <summary>Flash custom image…</summary>
     <div class="dropzone" id="dropzone" role="button" tabindex="0" aria-label="Select firmware image">
-      Drop .img / .bin here, or click to browse
-      <input type="file" id="custom-file" accept=".img,.bin,application/octet-stream" style="display:none">
+      Drop an .img, .img.xz or .img.gz here, or click to browse
+      <input type="file" id="custom-file" accept=".img,.bin,.xz,.gz,application/octet-stream" style="display:none">
     </div>
+    <div class="custom-info" id="custom-info" aria-live="polite"></div>
     <div class="risk-warning">
       <strong>Warning:</strong> This overwrites storage at offset&nbsp;0.
       An incompatible image will prevent normal boot.
@@ -147,6 +150,10 @@
     <label class="risk-check">
       <input type="checkbox" id="risk-ack">
       I understand — an incompatible image will prevent boot until recovered via Maskrom mode
+    </label>
+    <label class="risk-check">
+      <input type="checkbox" id="verify-check" checked>
+      After writing, read back the first 32&nbsp;MiB (partition table and bootloader) and compare
     </label>
     <button id="btn-custom" class="flash-btn" disabled>Flash Custom Image</button>
   </details>
@@ -175,6 +182,10 @@
 
   <script type="module">
     import { createFlashWorker } from './src/proxy.js?v=WASM_HASH';
+    import { createImageWorker } from './src/image-proxy.js?v=WASM_HASH';
+    import {
+      writeRawFile, writePieces, verifyHead, parseFlashSize, runCollect, PIECE_SIZE, VERIFY_BYTES,
+    } from './src/custom-flash.js?v=WASM_HASH';
 
     const UEFI_REPO  = 'gahingwoo/edk2-rk3576';
     // The UEFI images are fetched from the latest edk2-rk3576 release at deploy
@@ -225,6 +236,11 @@
     const WORKER_URL = new URL('./src/worker.js?v=WASM_HASH',           location.href).href;
     const MODULE_URL = new URL('./dist/rkdeveloptool.js?v=WASM_HASH',   location.href).href;
     const WASM_URL   = new URL('./dist/rkdeveloptool.wasm?v=WASM_HASH', location.href).href;
+    const IMAGE_WORKER_URL = new URL('./src/image-worker.js?v=WASM_HASH', location.href).href;
+
+    // On the ROCK 4D, `wl 0` writes the SPI NOR flash (16 MiB).  Anything
+    // bigger is an OS image, which belongs on a microSD card.
+    const ROCK4D_SPI_BYTES = 16 * 1024 * 1024;
 
     const btnUefi      = document.getElementById('btn-uefi');
     const btnUboot     = document.getElementById('btn-uboot');
@@ -236,10 +252,16 @@
     const dropzone     = document.getElementById('dropzone');
     const fileInput    = document.getElementById('custom-file');
     const riskAck      = document.getElementById('risk-ack');
+    const verifyCheck  = document.getElementById('verify-check');
+    const customInfoEl = document.getElementById('custom-info');
     const deviceBtns   = document.querySelectorAll('.device-btn');
 
     let currentDevice = 'rock4d';
     let customFile = null;
+    let customInfo = null;      // from the image worker: format, sizes
+    let customProblem = '';     // why this file cannot be flashed
+    let customNote = '';        // what is known about the file
+    let customToken = 0;
 
     deviceBtns.forEach(btn => {
       btn.addEventListener('click', () => {
@@ -247,6 +269,7 @@
         deviceBtns.forEach(b => b.classList.remove('active'));
         btn.classList.add('active');
         currentDevice = btn.dataset.device;
+        updateCustomBtn();
       });
     });
 
@@ -254,17 +277,77 @@
       deviceBtns.forEach(b => { b.disabled = disabled; });
     }
 
-    function updateCustomBtn() {
-      btnCustom.disabled = !(customFile && riskAck.checked && rk && !flashing);
+    const fmtSize = (n) => n >= 1 << 30 ? `${(n / (1 << 30)).toFixed(2)} GiB` : `${(n / (1 << 20)).toFixed(1)} MiB`;
+
+    let imageWorker = null;
+    function getImageWorker() {
+      if (!imageWorker) {
+        imageWorker = createImageWorker({
+          workerUrl: IMAGE_WORKER_URL,
+          onProgress: ({ phase, done, total }) => {
+            if (phase === 'hash') setCustomInfo(`Checking the file against the release: ${Math.floor(done * 100 / total)}%`);
+          },
+        });
+      }
+      return imageWorker;
     }
 
-    function setCustomFile(file) {
-      if (!file) return;
+    // Why the picked file cannot be flashed on the selected board, or ''.
+    function customBlockReason() {
+      if (customProblem) return customProblem;
+      if (!customInfo) return '';
+      const size = customInfo.imageSize ?? customInfo.imageSizeHint ?? customInfo.compressedSize;
+      if (currentDevice === 'rock4d' && size > ROCK4D_SPI_BYTES) {
+        return `On the ROCK 4D this page writes the ${fmtSize(ROCK4D_SPI_BYTES)} SPI flash, and this image is ` +
+               `${fmtSize(size)}. An operating system image goes on a microSD card: write it with ` +
+               'Raspberry Pi Imager.';
+      }
+      return '';
+    }
+
+    function setCustomInfo(text, isErr = false) {
+      customInfoEl.textContent = text;
+      customInfoEl.className = 'custom-info' + (isErr ? ' err' : '');
+    }
+
+    function updateCustomBtn() {
+      const reason = customBlockReason();
+      if (customFile && customInfo) setCustomInfo(reason || customNote, !!reason);
+      btnCustom.disabled = !(customFile && customInfo && !reason && riskAck.checked && rk && !flashing);
+    }
+
+    async function setCustomFile(file) {
+      if (!file || flashing) return;
+      const token = ++customToken;
       customFile = file;
+      customInfo = null;
+      customProblem = '';
+      customNote = '';
       dropzone.textContent = `✓ ${file.name} — ${(file.size / 1024 / 1024).toFixed(1)} MB`;
       // Re-append the hidden file input so the dropzone still works
       dropzone.appendChild(fileInput);
       dropzone.classList.add('has-file');
+      setCustomInfo('Reading the file…');
+      updateCustomBtn();
+      try {
+        const iw = getImageWorker();
+        const info = await iw.open(file);
+        if (token !== customToken) return;
+        if (info.format === 'unsupported') {
+          customProblem = info.message;
+        } else {
+          const notes = [];
+          if (info.format === 'raw') notes.push(`Raw image, ${fmtSize(info.imageSize)}.`);
+          else if (info.imageSize) notes.push(`${info.format} file, ${fmtSize(info.imageSize)} once decompressed; it is decompressed while it is written.`);
+          else notes.push(`${info.format} file; it is decompressed while it is written.`);
+          customNote = notes.join(' ');
+        }
+        customInfo = info;
+      } catch (err) {
+        if (token !== customToken) return;
+        customProblem = err.message;
+        customInfo = { format: 'unsupported' };
+      }
       updateCustomBtn();
     }
 
@@ -312,12 +395,19 @@
     const ANSI_RE = /\x1b\[[\d;]*[A-Za-z]/g;
     const stripAnsi = (s) => s.replace(ANSI_RE, '');
 
+    // While a custom image is written piece by piece, wl's "(NN%)" lines are
+    // per piece; the flow routes them through pieceListener.
+    let pieceListener = null;
+    const captures = []; // arrays collecting stdout lines (runCollect)
+
     function onStdout(text) {
       text = stripAnsi(text);
       if (!text.trim()) return;
-      log(text);
+      for (const c of captures) c.push(text);
       const m = text.match(/\((\d+)%\)/);
-      if (m) setProgress(+m[1]);
+      // Per-piece progress lines would flood the log (dozens per piece).
+      if (!(m && pieceListener)) log(text);
+      if (m) pieceListener ? pieceListener(+m[1]) : setProgress(+m[1]);
     }
 
     let rk = null;
@@ -385,7 +475,7 @@
         // ④ Mount blobs into WASM WORKERFS (zero-copy)
         log('Mounting files into WASM VFS…', 'dim');
         loaderMount = await rk.mountBlob('loader.bin',   loaderBlob);
-        fwMount     = await rk.mountBlob('firmware.img', fwBlob);
+        if (!target.custom) fwMount = await rk.mountBlob('firmware.img', fwBlob);
 
         if (isMaskrom) {
           // ⑤ DownloadBoot
@@ -420,10 +510,14 @@
         }
 
         // ⑦ WriteLBA — stream firmware image to storage at LBA 0
-        setStatus(`Writing ${target.label} firmware (wl)…`);
-        log('\n$ rkdeveloptool wl 0 firmware.img');
-        const wl = await rk.run(['wl', '0', fwMount.path]);
-        if (wl.exitCode !== 0) throw new Error(`WriteLBA failed (exit ${wl.exitCode})`);
+        if (target.custom) {
+          await writeCustom(target.custom);
+        } else {
+          setStatus(`Writing ${target.label} firmware (wl)…`);
+          log('\n$ rkdeveloptool wl 0 firmware.img');
+          const wl = await rk.run(['wl', '0', fwMount.path]);
+          if (wl.exitCode !== 0) throw new Error(`WriteLBA failed (exit ${wl.exitCode})`);
+        }
 
         // ⑧ Reset
         log('\n$ rkdeveloptool rd');
@@ -448,8 +542,66 @@
         setDeviceBtnsDisabled(false);
         updateCustomBtn();
       } finally {
+        pieceListener = null;
+        if (target.custom && imageWorker) await imageWorker.cancel().catch(() => {});
         if (loaderMount) await rk.umount(loaderMount).catch(() => {});
         if (fwMount)     await rk.umount(fwMount).catch(() => {});
+      }
+    }
+
+    // Write the picked file; the board is in Loader mode.
+    async function writeCustom({ file, info, verify }) {
+      // Storage size, to refuse an image that does not fit before writing.
+      log('\n$ rkdeveloptool rfi');
+      const rfi = await runCollect(rk, ['rfi'], captures);
+      const capacity = rfi.exitCode === 0 ? parseFlashSize(rfi.lines) : null;
+      if (capacity) log(`Storage: ${fmtSize(capacity)}`, 'dim');
+      else log('Could not read the storage size; writing anyway.', 'warn');
+      const size = info.imageSize ?? null;
+      if (capacity && size && size > capacity) {
+        throw new Error(`The image (${fmtSize(size)}) is larger than the storage (${fmtSize(capacity)}).`);
+      }
+
+      let head;
+      if (info.format === 'raw') {
+        setStatus(`Writing ${file.name} (wl)…`);
+        await writeRawFile({ rk, file, log });
+        head = new Uint8Array(await file.slice(0, Math.min(VERIFY_BYTES, file.size)).arrayBuffer());
+      } else {
+        const iw = getImageWorker();
+        await iw.start(PIECE_SIZE);
+        const total = size ?? info.imageSizeHint ?? null;
+        let last = null;
+        setStatus(`Writing ${file.name}…`);
+        const res = await writePieces({
+          rk,
+          nextPiece: async () => {
+            const r = await iw.next();
+            if (r.done) { last = r; return null; }
+            return r;
+          },
+          total,
+          log,
+          onProgress: (done, _t, frac, len) => {
+            const now = done + frac * len;
+            if (total) setProgress(Math.min(99, (now * 100) / total));
+            setStatus(`Writing ${file.name}: ${fmtSize(now)}${total ? ' of ' + fmtSize(total) : ''}`);
+          },
+          setPieceListener: (fn) => { pieceListener = fn; },
+        });
+        head = res.head;
+        log(`Wrote ${fmtSize(res.written)} in ${res.calls} wl calls.`, 'dim');
+        log(`Image SHA-256: ${last.sha256}`, 'dim');
+      }
+
+      if (verify && head.length) {
+        setStatus('Reading back the start of the storage (rl)…');
+        pieceListener = () => {};
+        const v = await verifyHead({ rk, expected: head, log, capture: captures });
+        pieceListener = null;
+        if (v.ok) log(`Read back the first ${fmtSize(head.length)}: it matches the image.`);
+        else if (v.filler) log(`Read-back check incomplete: ${v.reason}.`, 'warn');
+        else throw new Error(`Read-back check failed: ${v.reason}.`);
       }
     }
 
@@ -458,10 +610,11 @@
     btnCustom.addEventListener('click', () => {
       if (!customFile) return;
       doFlash({
-        label:   customFile.name,
+        label:   'Custom Image',
         fwBlob:  customFile,
         fwDesc:  customFile.name,
         doneMsg: `Done! ${customFile.name} written to storage.`,
+        custom:  { file: customFile, info: customInfo, verify: verifyCheck.checked },
       }, btnCustom);
     });
   </script>

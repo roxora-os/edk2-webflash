@@ -108,9 +108,13 @@ jobs:
           cp dist/rkdeveloptool.js   _site/dist/
           cp dist/rkdeveloptool.wasm _site/dist/
 
-          # Our own JS files (Worker, proxy — written from scratch, no jjm2473 code)
-          cp src/worker.js _site/src/
-          cp src/proxy.js  _site/src/
+          # Our own JS files (Workers, proxies, image handling; written from
+          # scratch, no jjm2473 code)
+          cp src/*.js _site/src/
+
+          # XZ decoder (xzwasm, MIT; see vendor/xzwasm/README.md)
+          mkdir -p _site/vendor/xzwasm
+          cp vendor/xzwasm/xzwasm.wasm _site/vendor/xzwasm/
 
           # Cross-Origin Isolation Service Worker (enables SharedArrayBuffer)
           cp coi-serviceworker.js _site/
