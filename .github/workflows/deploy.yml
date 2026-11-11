@@ -26,11 +26,19 @@ jobs:
 
       # Clone rkdeveloptool (GPL v2) source and its libusb patches (LGPL derivative).
       # We only use the C++ source and patches — NOT jjm2473's JS wrapper code.
+      # Pinned: a new upstream commit changes the tool that flashes boards, so
+      # it should arrive as a reviewed change to this line, not silently.
       - name: Clone rkdeveloptool source & patches
+        env:
+          RKTOOL_REF: 7879bdb910cdd63b7cae595b683dd672720b0490
         run: |
-          git clone --depth=1 https://github.com/jjm2473/rktool-webusb.git _rktool
+          git init -q _rktool
           cd _rktool
+          git remote add origin https://github.com/jjm2473/rktool-webusb.git
+          git fetch -q --depth=1 origin "$RKTOOL_REF"
+          git checkout -q FETCH_HEAD
           git submodule update --init --depth=1 rkdeveloptool
+          git log -1 --format='rktool-webusb %H' && git -C rkdeveloptool log -1 --format='rkdeveloptool %H'
 
       # Download libusb 1.0.29 (LGPL 2.1) and apply the Emscripten-specific patches.
       - name: Download & patch libusb 1.0.29
