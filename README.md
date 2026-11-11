@@ -1,5 +1,10 @@
 # edk2-webflash
 
+> This fork is no longer maintained. Roxora's web flasher is now the web
+> version of Roxora Imager: https://roxora-os.github.io/imager/ (source:
+> https://github.com/roxora-os/imager). The original flasher is
+> https://github.com/gahingwoo/edk2-webflash.
+
 WebUSB flasher for [edk2-rk3576](https://github.com/gahingwoo/edk2-rk3576) UEFI on Rockchip RK3576.
 Runs entirely in the browser — no app, no driver, no USB passthrough.
 Wraps [rkdeveloptool](https://github.com/rockchip-linux/rkdeveloptool) compiled to WASM via Emscripten.
