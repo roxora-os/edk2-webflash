@@ -1,0 +1,48 @@
+{
+  "_sample": "SAMPLE DATA. Sizes and checksums are made up; the release does not exist. See docs/release-contract.md.",
+  "schema": 1,
+  "release": {
+    "tag": "v2026.11.0",
+    "version": "2026.11.0",
+    "date": "2026-11-20",
+    "prerelease": true,
+    "url": "https://github.com/roxora-os/build/releases/tag/v2026.11.0",
+    "armbian_ref": "3b7191306d36c9fa1c3ae2c05149d18c3ede0dcf"
+  },
+  "images": [
+    {
+      "board": "radxa-rock-4d",
+      "board_name": "Radxa ROCK 4D",
+      "soc": "rk3576",
+      "release": "noble",
+      "ubuntu_version": "24.04",
+      "branch": "edge",
+      "kernel": "7.3.4",
+      "file": "roxora-radxa-rock-4d-noble-edge-2026.11.0.img.xz",
+      "url": "https://github.com/roxora-os/build/releases/download/v2026.11.0/roxora-radxa-rock-4d-noble-edge-2026.11.0.img.xz",
+      "size": 412345678,
+      "sha256": "472e91ddb5b305155b1de916c8e5237643ac9c648b43d9f7062a3d1128cf82f2",
+      "extract_size": 2466250752,
+      "extract_sha256": "dfde70fa7ff6dd7a4b24c47624bb2d0b6c1fde2fa1b8222ca55b2ae5f06fbb88",
+      "status": "ci-only",
+      "verify_url": "https://github.com/roxora-os/build/releases/download/v2026.11.0/roxora-radxa-rock-4d-noble-edge-2026.11.0.verify.txt"
+    },
+    {
+      "board": "armsom-cm5-io",
+      "board_name": "ArmSoM CM5-IO",
+      "soc": "rk3576",
+      "release": "noble",
+      "ubuntu_version": "24.04",
+      "branch": "edge",
+      "kernel": "7.3.4",
+      "file": "roxora-armsom-cm5-io-noble-edge-2026.11.0.img.xz",
+      "url": "https://github.com/roxora-os/build/releases/download/v2026.11.0/roxora-armsom-cm5-io-noble-edge-2026.11.0.img.xz",
+      "size": 389012345,
+      "sha256": "3ce3fea5ee09483cfc3bd3705ddf8da42b74f89abcfe51f29b66cc9e187fba13",
+      "extract_size": 1929379840,
+      "extract_sha256": "eabcb50b065e097c21d600da9e898912d3eb26ca1950c956660a0afcc03c1509",
+      "status": "ci-only",
+      "verify_url": "https://github.com/roxora-os/build/releases/download/v2026.11.0/roxora-armsom-cm5-io-noble-edge-2026.11.0.verify.txt"
+    }
+  ]
+}

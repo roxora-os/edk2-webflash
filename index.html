@@ -97,6 +97,12 @@
     #btn-custom { background: #b91c1c; padding: .45rem 1.3rem; font-size: .88rem; }
     .custom-info { font-size: .82rem; color: #444; margin: -.2rem 0 .6rem; min-height: 1.2em; }
     .custom-info.err { color: #cf222e; }
+    .roxora-intro { font-size: .84rem; margin: .6rem 0 .5rem; line-height: 1.55; }
+    .roxora-list { list-style: none; font-size: .84rem; margin-bottom: .4rem; }
+    .roxora-list li { padding: .3rem 0; border-top: 1px solid #eaeef2; }
+    .roxora-list li:first-child { border-top: none; }
+    .roxora-list .meta { color: #666; }
+    .roxora-msg { font-size: .84rem; color: #666; margin-bottom: .4rem; }
     #btn-custom:hover:not(:disabled) { background: #991b1b; }
   </style>
 </head>
@@ -133,6 +139,13 @@
 
   <progress id="prog" value="0" max="100"></progress>
   <div id="log" aria-live="polite"></div>
+
+  <details class="custom-section" id="roxora-section">
+    <summary>Roxora images…</summary>
+    <p class="roxora-intro" id="roxora-intro"></p>
+    <div class="roxora-msg" id="roxora-msg"></div>
+    <ul class="roxora-list" id="roxora-list"></ul>
+  </details>
 
   <details class="custom-section" id="custom-section">
     <summary>Flash custom image…</summary>
@@ -186,6 +199,9 @@
     import {
       writeRawFile, writePieces, verifyHead, parseFlashSize, runCollect, PIECE_SIZE, VERIFY_BYTES,
     } from './src/custom-flash.js?v=WASM_HASH';
+    import {
+      fetchRoxoraImages, expectedForFile, ROXORA_BOARDS, RELEASES_PAGE,
+    } from './src/roxora.js?v=WASM_HASH';
 
     const UEFI_REPO  = 'gahingwoo/edk2-rk3576';
     // The UEFI images are fetched from the latest edk2-rk3576 release at deploy
@@ -254,11 +270,16 @@
     const riskAck      = document.getElementById('risk-ack');
     const verifyCheck  = document.getElementById('verify-check');
     const customInfoEl = document.getElementById('custom-info');
+    const roxoraIntro  = document.getElementById('roxora-intro');
+    const roxoraMsg    = document.getElementById('roxora-msg');
+    const roxoraList   = document.getElementById('roxora-list');
+    const roxoraSection = document.getElementById('roxora-section');
     const deviceBtns   = document.querySelectorAll('.device-btn');
 
     let currentDevice = 'rock4d';
     let customFile = null;
     let customInfo = null;      // from the image worker: format, sizes
+    let customExpected = null;  // matching Roxora release entry, if any
     let customProblem = '';     // why this file cannot be flashed
     let customNote = '';        // what is known about the file
     let customToken = 0;
@@ -270,6 +291,7 @@
         btn.classList.add('active');
         currentDevice = btn.dataset.device;
         updateCustomBtn();
+        renderRoxora();
       });
     });
 
@@ -300,7 +322,7 @@
       if (currentDevice === 'rock4d' && size > ROCK4D_SPI_BYTES) {
         return `On the ROCK 4D this page writes the ${fmtSize(ROCK4D_SPI_BYTES)} SPI flash, and this image is ` +
                `${fmtSize(size)}. An operating system image goes on a microSD card: write it with ` +
-               'Raspberry Pi Imager.';
+               'Raspberry Pi Imager (see Roxora images above).';
       }
       return '';
     }
@@ -321,6 +343,7 @@
       const token = ++customToken;
       customFile = file;
       customInfo = null;
+      customExpected = null;
       customProblem = '';
       customNote = '';
       dropzone.textContent = `✓ ${file.name} — ${(file.size / 1024 / 1024).toFixed(1)} MB`;
@@ -340,6 +363,30 @@
           if (info.format === 'raw') notes.push(`Raw image, ${fmtSize(info.imageSize)}.`);
           else if (info.imageSize) notes.push(`${info.format} file, ${fmtSize(info.imageSize)} once decompressed; it is decompressed while it is written.`);
           else notes.push(`${info.format} file; it is decompressed while it is written.`);
+          if (file.name.startsWith('roxora-')) {
+            setCustomInfo('Looking the file up in the Roxora releases…');
+            const { images } = await loadRoxora();
+            if (token !== customToken) return;
+            customExpected = expectedForFile(images, file.name);
+            const exp = customExpected;
+            if (exp && exp.size != null && exp.size !== file.size) {
+              customProblem = `This file is ${file.size} bytes, but ${exp.image.file} in Roxora ${exp.image.tag} ` +
+                              `is ${exp.size} bytes. The download is incomplete: download it again.`;
+            } else if (exp && exp.sha256) {
+              const { sha256 } = await iw.hash();
+              if (token !== customToken) return;
+              if (sha256 !== exp.sha256) {
+                customProblem = `This file does not match Roxora ${exp.image.tag}: its SHA-256 is ${sha256}, ` +
+                                `the release lists ${exp.sha256}. Download it again.`;
+              } else {
+                notes.push(`Checksum matches Roxora ${exp.image.tag}.`);
+              }
+            } else if (exp) {
+              notes.push(`Listed in Roxora ${exp.image.tag}; the release gives no checksum to compare.`);
+            } else {
+              notes.push('Not found in the Roxora releases, so it was not checked.');
+            }
+          }
           customNote = notes.join(' ');
         }
         customInfo = info;
@@ -350,6 +397,58 @@
       }
       updateCustomBtn();
     }
+
+    // ── Roxora images ─────────────────────────────────────────────────────────
+    let roxoraPromise = null;
+    function loadRoxora() {
+      if (!roxoraPromise) roxoraPromise = fetchRoxoraImages();
+      return roxoraPromise;
+    }
+
+    function el(tag, attrs = {}, ...children) {
+      const e = document.createElement(tag);
+      for (const [k, v] of Object.entries(attrs)) e.setAttribute(k, v);
+      for (const c of children) e.append(c);
+      return e;
+    }
+
+    async function renderRoxora() {
+      if (!roxoraSection.open) return;
+      const board = ROXORA_BOARDS[currentDevice];
+      if (currentDevice === 'rock4d') {
+        roxoraIntro.textContent =
+          'The ROCK 4D runs Roxora from a microSD card. Its boot ROM starts only from the SPI flash ' +
+          '(or a UFS module), never from the card, so the SPI flash needs a bootloader that reads the card: ' +
+          'flash it with Flash U-Boot above (the UEFI firmware does not start Roxora). Then write the image ' +
+          'below to a microSD card with Raspberry Pi Imager.';
+      } else {
+        roxoraIntro.textContent =
+          'On the CM5-IO, Roxora goes on the eMMC: download the image below, then pick the downloaded ' +
+          '.img.xz under Flash custom image. It is checked, decompressed and written in one go. This ' +
+          'replaces everything on the eMMC, including UEFI firmware flashed here before.';
+      }
+      roxoraMsg.textContent = 'Loading the list of releases…';
+      roxoraList.replaceChildren();
+      const { images, message } = await loadRoxora();
+      if (ROXORA_BOARDS[currentDevice] !== board) return; // board changed meanwhile
+      const mine = images.filter((i) => i.board === board).slice(0, 5);
+      if (message) {
+        roxoraMsg.textContent = message;
+      } else if (!mine.length) {
+        roxoraMsg.textContent = 'No Roxora release has an image for this board yet.';
+      } else {
+        roxoraMsg.textContent = '';
+      }
+      for (const img of mine) {
+        roxoraList.append(el('li', {},
+          el('a', { href: img.url, rel: 'noopener' }, img.file), el('br'),
+          el('span', { class: 'meta' },
+            `${img.tag}${img.prerelease ? ', pre-release: not tested on hardware yet' : ''}, ` +
+            `Ubuntu ${img.release}, kernel branch ${img.branch}, ${fmtSize(img.size)}`)));
+      }
+      roxoraList.append(el('li', {}, el('a', { href: RELEASES_PAGE, target: '_blank', rel: 'noopener' }, 'All releases')));
+    }
+    roxoraSection.addEventListener('toggle', renderRoxora);
 
     dropzone.addEventListener('click',     () => fileInput.click());
     dropzone.addEventListener('keydown',   (e) => { if (e.key === 'Enter' || e.key === ' ') fileInput.click(); });
@@ -550,7 +649,7 @@
     }
 
     // Write the picked file; the board is in Loader mode.
-    async function writeCustom({ file, info, verify }) {
+    async function writeCustom({ file, info, expected, verify }) {
       // Storage size, to refuse an image that does not fit before writing.
       log('\n$ rkdeveloptool rfi');
       const rfi = await runCollect(rk, ['rfi'], captures);
@@ -592,6 +691,11 @@
         head = res.head;
         log(`Wrote ${fmtSize(res.written)} in ${res.calls} wl calls.`, 'dim');
         log(`Image SHA-256: ${last.sha256}`, 'dim');
+        if (expected?.image?.extractSha256 && last.sha256 !== expected.image.extractSha256) {
+          throw new Error(`The decompressed image does not match Roxora ${expected.image.tag} ` +
+                          `(SHA-256 ${last.sha256}, expected ${expected.image.extractSha256}). Do not boot it; ` +
+                          'download the image again and flash it again.');
+        }
       }
 
       if (verify && head.length) {
@@ -609,12 +713,15 @@
     btnUboot.addEventListener('click', () => doFlash(DEVICES[currentDevice].targets.uboot, btnUboot));
     btnCustom.addEventListener('click', () => {
       if (!customFile) return;
+      const roxora = customExpected
+        ? ' Roxora starts on the first boot; log in as ubuntu with password ubuntu and choose a new password.'
+        : '';
       doFlash({
         label:   'Custom Image',
         fwBlob:  customFile,
         fwDesc:  customFile.name,
-        doneMsg: `Done! ${customFile.name} written to storage.`,
-        custom:  { file: customFile, info: customInfo, verify: verifyCheck.checked },
+        doneMsg: `Done! ${customFile.name} written to storage.${roxora}`,
+        custom:  { file: customFile, info: customInfo, expected: customExpected, verify: verifyCheck.checked },
       }, btnCustom);
     });
   </script>
